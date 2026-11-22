@@ -1,0 +1,63 @@
+name: Build Windows app
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    env:
+      QT_QPA_PLATFORM: offscreen
+      PYTHONUTF8: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-dev.txt
+
+      - name: Run tests
+        run: python -m pytest -q
+
+      - name: Build PurpleCalc.exe
+        run: python -m PyInstaller --noconfirm --clean PurpleCalc.spec
+
+      - name: Smoke test the .exe
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath "dist\PurpleCalc.exe" -ArgumentList "--smoke-test" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "Smoke test failed (exit code $($p.ExitCode))" }
+          $exe = Get-Item "dist\PurpleCalc.exe"
+          "PurpleCalc.exe OK - {0:N1} MB, version {1}" -f ($exe.Length / 1MB), $exe.VersionInfo.FileVersion
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PurpleCalc-windows-x64
+          path: dist/PurpleCalc.exe
+          if-no-files-found: error
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/PurpleCalc.exe
+          generate_release_notes: true
